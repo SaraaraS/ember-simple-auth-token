@@ -125,7 +125,7 @@ export default TokenAuthenticator.extend({
       }
 
       if (expiresAt > now) {
-        const wait = expiresAt - now - (this.refreshLeeway * 1000);
+        const wait = expiresAt - now - (this.refreshLeeway);
 
         if (wait > 0) {
           if (this.refreshAccessTokens) {
@@ -325,8 +325,13 @@ export default TokenAuthenticator.extend({
     return new Ember.RSVP.resolve();
   },
 
+  /**
+  Returns the current time as a timestamp in seconds
+    @method getCurrentTime
+    @return {Integer} timestamp
+  */
   getCurrentTime() {
-    return (new Date()).getTime();
+    return Math.floor((new Date()).getTime() / 1000);
   },
 
   /**
