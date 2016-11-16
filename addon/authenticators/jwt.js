@@ -164,19 +164,20 @@ export default TokenAuthenticator.extend({
     return new Ember.RSVP.Promise((resolve, reject) => {
       const data = this.getAuthenticateData(credentials);
 
-      this.makeRequest(this.serverTokenEndpoint, data, headers).then(response => {
-        Ember.run(() => {
-          try {
-            const sessionData = this.handleAuthResponse(response);
+      this.makeRequest(this.serverTokenEndpoint, data, headers)
+        .then((response) => {
+          Ember.run(() => {
+            try {
+              const sessionData = this.handleAuthResponse(response);
 
-            resolve(sessionData);
-          } catch(error) {
-            reject(error);
-          }
+              resolve(sessionData);
+            } catch (error) {
+              reject(error);
+            }
+          });
+        }, (xhr) => {
+          Ember.run(() => { reject(xhr.responseJSON || xhr.responseText); });
         });
-      }, xhr => {
-        Ember.run(() => { reject(xhr.responseJSON || xhr.responseText); });
-      });
     });
   },
 
@@ -200,9 +201,7 @@ export default TokenAuthenticator.extend({
 
       if (!Ember.isEmpty(token) && !Ember.isEmpty(expiresAt) && wait > 0) {
         Ember.run.cancel(this._refreshTokenTimeout);
-
         delete this._refreshTokenTimeout;
-
         this._refreshTokenTimeout = Ember.run.later(this, this.refreshAccessToken, token, wait);
       }
     }
@@ -226,21 +225,28 @@ export default TokenAuthenticator.extend({
     const data = this.makeRefreshData(token);
 
     return new Ember.RSVP.Promise((resolve, reject) => {
-      this.makeRequest(this.serverTokenRefreshEndpoint, data, headers).then(response => {
-        Ember.run(() => {
-          try {
-            const sessionData = this.handleAuthResponse(response);
+      this.makeRequest(this.serverTokenRefreshEndpoint, data, headers)
+        .then((response) => {
+          Ember.run(() => {
+            try {
+              const sessionData = this.handleAuthResponse(response);
 
-            this.trigger('sessionDataUpdated', sessionData);
-            resolve(sessionData);
-          } catch(error) {
-            reject(error);
-          }
+              this.trigger('sessionDataUpdated', sessionData);
+              resolve(sessionData);
+            } catch (error) {
+              reject(error);
+            }
+          });
+        }, (xhr, status, error) => {
+          Ember.Logger.warn(
+            'Access token could not be refreshed - ' +
+            `server responded with ${error}.`
+          );
+
+          this.handleTokenRefreshFail(xhr.status);
+
+          reject();
         });
-      }, (xhr, status, error) => {
-        Ember.Logger.warn(`Access token could not be refreshed - server responded with ${error}.`);
-        reject();
-      });
     });
   },
 
@@ -299,10 +305,12 @@ export default TokenAuthenticator.extend({
       contentType: 'application/json',
       headers: this.headers,
       beforeSend: (xhr, settings) => {
-        xhr.setRequestHeader('Accept', settings.accepts.json);
+        if(this.headers['Accept'] === null || this.headers['Accept'] === undefined) {
+          xhr.setRequestHeader('Accept', settings.accepts.json);
+        }
 
         if (headers) {
-          Object.keys(headers).forEach(key => {
+          Object.keys(headers).forEach((key) => {
             xhr.setRequestHeader(key, headers[key]);
           });
         }
@@ -319,9 +327,7 @@ export default TokenAuthenticator.extend({
   */
   invalidate() {
     Ember.run.cancel(this._refreshTokenTimeout);
-
     delete this._refreshTokenTimeout;
-
     return new Ember.RSVP.resolve();
   },
 
@@ -356,7 +362,7 @@ export default TokenAuthenticator.extend({
   handleAuthResponse(response) {
     const token = Ember.get(response, this.tokenPropertyName);
 
-    if(Ember.isEmpty(token)) {
+    if (Ember.isEmpty(token)) {
       throw new Error('Token is empty. Please check your backend response.');
     }
 
@@ -369,5 +375,21 @@ export default TokenAuthenticator.extend({
     this.scheduleAccessTokenRefresh(expiresAt, token);
 
     return assign(this.getResponseData(response), tokenExpireData);
+  },
+
+  /**
+    Handles token refresh fail status. If the server response to a token refresh has a
+    status of 401 or 403 then the token in the session will be invalidated and
+    the sessionInvalidated provided by ember-simple-auth will be triggered.
+
+    @method handleTokenRefreshFail
+  */
+
+  handleTokenRefreshFail(refreshStatus) {
+    if (refreshStatus === 401 || refreshStatus === 403) {
+      return this.invalidate().then(() => {
+        this.trigger('sessionDataInvalidated');
+      });
+    }
   }
 });

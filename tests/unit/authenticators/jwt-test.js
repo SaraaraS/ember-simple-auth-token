@@ -597,6 +597,41 @@ test('#authenticate does not schedule a token refresh when `refreshAccessTokens`
   });
 });
 
+test('#authenticate sends an AJAX request with custom headers', assert => {
+  assert.expect(1);
+
+  const credentials = {
+    identification: 'username',
+    password: 'password'
+  };
+
+  Configuration.headers = {
+    'X-API-KEY': '123-abc',
+    'X-ANOTHER-HEADER': 0,
+    Accept: 'application/vnd.api+json'
+  };
+
+  App.authenticator = JWT.create();
+  App.authenticator.authenticate(credentials);
+
+  Ember.run(() => {
+    var args = Ember.$.ajax.getCall(0).args[0];
+    delete args.beforeSend;
+    assert.deepEqual(args, {
+      url: '/api/token-auth/',
+      method: 'POST',
+      data: '{"password":"password","username":"username"}',
+      dataType: 'json',
+      contentType: 'application/json',
+      headers: {
+        'X-API-KEY': '123-abc',
+        'X-ANOTHER-HEADER': 0,
+        Accept: 'application/vnd.api+json'
+      }
+    });
+  });
+});
+
 test('#refreshAccessToken makes an AJAX request to the token endpoint.', assert => {
   assert.expect(1);
 
@@ -688,6 +723,70 @@ test('#refreshAccessToken triggers the `sessionDataUpdated` event on successful 
 
     done();
   });
+});
+
+test('#refreshAccessToken invalidates session and triggers `sessionDataInvalidated` when the server responds with 401 or 403.', assert => {
+  assert.expect(2);
+
+  const jwt = JWT.create();
+  const expiresAt = 3;
+
+  sinon.stub(App.authenticator, 'scheduleAccessTokenRefresh', () => { return null; });
+
+  let token = {};
+
+  token[jwt.identificationField] = 'test@test.com';
+  token[jwt.tokenExpireName] = expiresAt;
+
+  token = createFakeToken(token);
+
+  App.server.respondWith('POST', jwt.serverTokenRefreshEndpoint, [
+    401, {
+      'Content-Type': 'application/json'
+    },
+    '{ "error": "Unauthorized"}'
+  ]);
+
+  const spy = sinon.spy(App.authenticator, 'invalidate');
+  let dataInvalidated = false;
+
+  App.authenticator.refreshAccessToken(token);
+
+  App.authenticator.one('sessionDataInvalidated', () => {
+    dataInvalidated = true;
+
+    assert.equal(spy.calledOnce, true);
+    assert.equal(dataInvalidated, true);
+  });
+});
+
+test('#refreshAccessToken does not invalidate session when the server responds with 500.', assert => {
+  assert.expect(1);
+
+  const jwt = JWT.create();
+  const expiresAt = 3;
+
+  sinon.stub(App.authenticator, 'scheduleAccessTokenRefresh', () => { return null; });
+
+  let token = {};
+
+  token[jwt.identificationField] = 'test@test.com';
+  token[jwt.tokenExpireName] = expiresAt;
+
+  token = createFakeToken(token);
+
+  App.server.respondWith('POST', jwt.serverTokenRefreshEndpoint, [
+    500, {
+      'Content-Type': 'application/json'
+    },
+    '{ "error": "Internal Server Error"}'
+  ]);
+
+  const spy = sinon.spy(App.authenticator, 'invalidate');
+
+  App.authenticator.refreshAccessToken(token);
+
+  assert.equal(spy.calledOnce, false);
 });
 
 test('#getTokenData returns correct data', assert => {
